@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error;
 use std::fmt;
 use std::fs;
@@ -38,58 +39,114 @@ impl From<io::Error> for DiskvError {
 
 pub struct Options {
     pub base_path: String,
+    pub cache_size_max: u32,
+}
+
+#[derive(Debug)]
+pub struct DiskvCache {
+    cache: HashMap<String, Vec<u8>>,
+    cache_size: u32,
+    cache_size_max: u32,
+}
+
+impl DiskvCache {
+    fn new(cache_size_max: u32) -> DiskvCache {
+        DiskvCache {
+            cache: HashMap::new(),
+            cache_size: 0,
+            cache_size_max: cache_size_max,
+        }
+    }
+
+    fn put(&mut self, key: String, val: Vec<u8>) {
+        let val_len = val.len() as u32;
+        if self.cache_size + val_len > self.cache_size_max {
+            eprintln!("\t ==> cache full, no more caching");
+        } else {
+            self.cache.insert(key, val);
+            self.cache_size += val_len;
+            eprintln!("\t ==> cached. cache_size: {}", self.cache_size);
+        }
+    }
+
+    fn get(&self, key: &String) -> Option<Vec<u8>> {
+        match self.cache.get(key) {
+            Some(v) => {
+                eprintln!("\t ==> cach hit. key: {}", key);
+                Some(v.to_vec())
+            }
+            None => {
+                eprintln!("\t ==> cach miss. key: {}", key);
+                None
+            }
+        }
+    }
+
+    fn delete(&mut self, key: &String) {
+        match self.cache.remove_entry(key) {
+            Some(v) => {
+                eprintln!("\t ==> cached. cache_size: {}", self.cache_size);
+                self.cache_size -= v.1.len() as u32
+            }
+            None => return,
+        }
+    }
 }
 
 pub struct Diskv {
     options: Options,
-
-    // we don't want to lock any data as such. we just want to make access to diskv methods
-    // synchronous
-    lock: sync::RwLock<bool>,
+    cache: sync::RwLock<DiskvCache>,
 }
 
 impl fmt::Display for Diskv {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         writeln!(f, "base path: {}", self.options.base_path)?;
-        writeln!(f, "locked: {:?}", self.lock)
+        writeln!(f, "locked: {:?}", self.cache)
     }
 }
 
 impl Diskv {
     pub fn new(options: Options) -> DiskvResult<Diskv> {
         fs::create_dir_all(&options.base_path)?;
+        let cache_size_max = options.cache_size_max;
         Ok(Diskv {
             options: options,
-            lock: sync::RwLock::new(true),
+            cache: sync::RwLock::new(DiskvCache::new(cache_size_max)),
         })
     }
 
     pub fn put(&self, key: String, val: Vec<u8>) -> Result<(), DiskvError> {
-        let _ = self.lock.write().unwrap();
-        Ok(fs::write(
-            path::Path::new(&self.options.base_path).join(key),
-            val,
-        )?)
+        let cache_key = key.clone();
+        let cache_val = val.clone();
+        let mut cache = self.cache.write().unwrap();
+        match fs::write(path::Path::new(&self.options.base_path).join(key), val) {
+            Ok(_) => Ok(cache.put(cache_key, cache_val)),
+            Err(e) => Err(DiskvError::IOError(e)),
+        }
     }
 
     pub fn get(&self, key: String) -> Result<Option<Vec<u8>>, DiskvError> {
-        let _ = self.lock.read().unwrap();
-        match fs::read(path::Path::new(&self.options.base_path).join(key)) {
-            Ok(v) => Ok(Some(v)),
-            Err(e) => {
-                if e.kind() == io::ErrorKind::NotFound {
-                    Ok(None)
-                } else {
-                    Err(DiskvError::IOError(e))
+        let cache = self.cache.read().unwrap();
+        match cache.get(&key) {
+            Some(v) => Ok(Some(v.to_vec())),
+            None => match fs::read(path::Path::new(&self.options.base_path).join(key)) {
+                Ok(v) => Ok(Some(v)),
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::NotFound {
+                        Ok(None)
+                    } else {
+                        Err(DiskvError::IOError(e))
+                    }
                 }
-            }
+            },
         }
     }
 
     pub fn delete(&self, key: String) -> Result<(), DiskvError> {
-        let _ = self.lock.write().unwrap();
+        let mut cache = self.cache.write().unwrap();
+        let cache_key = key.clone();
         match fs::remove_file(path::Path::new(&self.options.base_path).join(key)) {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(cache.delete(&cache_key)),
             Err(e) => {
                 if e.kind() == io::ErrorKind::NotFound {
                     Ok(())

@@ -44,12 +44,13 @@ fn main() {
     let dkv = Arc::new(
         diskv::Diskv::new(diskv::Options {
             base_path: String::from("data"),
+            cache_size_max: 128,
         })
         .expect("failed to create diskv"),
     );
 
-    let th1 = rwthread(String::from("worker1"), 10, Arc::clone(&dkv));
-    let th2 = rwthread(String::from("worker2"), 10, Arc::clone(&dkv));
+    let th1 = rwthread(String::from("worker1"), 30, Arc::clone(&dkv));
+    let th2 = rwthread(String::from("worker2"), 5, Arc::clone(&dkv));
 
     match th1.join() {
         Ok(_) => println!("th1 finished."),
