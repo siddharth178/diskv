@@ -14,13 +14,12 @@ fn rwthread(name: String, cnt: u32, dkv: Arc<diskv::Diskv>) -> thread::JoinHandl
         for key in &keys {
             println!("[{} put] key: {}", name, key.to_string());
             let val = format!("value of key {}", key);
-            dkv.put(key.to_string(), val.into_bytes())
-                .expect("failed to put");
+            dkv.put(key, val.into_bytes()).expect("failed to put");
         }
 
         println!("reading keys in {}", name);
         for key in &keys {
-            match dkv.get(key.to_string()).expect("failed to get") {
+            match dkv.get(key).expect("failed to get") {
                 Some(v) => println!(
                     "[{} get] key: {}, val: {}",
                     name,
@@ -34,7 +33,7 @@ fn rwthread(name: String, cnt: u32, dkv: Arc<diskv::Diskv>) -> thread::JoinHandl
         println!("deleting keys in {}", name);
         for key in &keys {
             println!("[{} delete] key: {}", name, key.to_string());
-            dkv.delete(key.to_string()).expect("failed to delete");
+            dkv.delete(key).expect("failed to delete");
         }
     });
     th
