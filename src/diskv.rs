@@ -56,39 +56,54 @@ impl DiskvCache {
         }
     }
 
+    fn make_space_for(&mut self, val_len: u32) {
+        let mut keys_to_delete: Vec<String> = Vec::new();
+        let mut key_sizes: u32 = 0;
+        for (k, v) in self.cache.iter() {
+            key_sizes += v.len() as u32;
+            keys_to_delete.push(k.to_string());
+            if self.cache_size - key_sizes >= val_len {
+                break;
+            }
+        }
+        for k in keys_to_delete.iter() {
+            self.delete(k);
+        }
+    }
+
     fn put(&mut self, key: &String, val: Vec<u8>) {
         let val_len = val.len() as u32;
-
         if val_len > self.cache_size_max {
             eprintln!(
-                "cache max size: {}, val size: {}, ignored.",
+                "==> cache max size: {}, val size: {}, ignored.",
                 self.cache_size_max, val_len
             );
             return;
         }
 
-        let existing_val_len = match self.cache.get_key_value(key) {
-            Some(v) => v.1.len() as u32,
-            None => 0,
-        };
-
-        if self.cache_size + (val_len - existing_val_len) > self.cache_size_max {
-            eprintln!("\t ==> cache full, no more caching");
-        } else {
-            self.cache.insert(key.clone(), val);
-            self.cache_size += val_len - existing_val_len;
-            eprintln!("\t ==> cached. cache_size: {}", self.cache_size);
+        self.delete(&key);
+        if self.cache_size + val_len > self.cache_size_max {
+            eprintln!("==> cache full, making space");
+            self.make_space_for(val_len);
         }
+
+        if self.cache_size + val_len > self.cache_size_max {
+            panic!("couldn't make space for given key");
+        }
+
+        self.cache.insert(key.clone(), val);
+        self.cache_size += val_len;
+        eprintln!("==> cached. cache_size: {}", self.cache_size);
     }
 
     fn get(&self, key: &String) -> Option<Vec<u8>> {
         match self.cache.get(key) {
             Some(v) => {
-                eprintln!("\t ==> cache hit. key: {}", key);
+                eprintln!("==> cache hit. key: {}", key);
                 Some(v.to_vec())
             }
             None => {
-                eprintln!("\t ==> cache miss. key: {}", key);
+                eprintln!("==> cache miss. key: {}", key);
                 None
             }
         }
@@ -97,7 +112,7 @@ impl DiskvCache {
     fn delete(&mut self, key: &String) {
         match self.cache.remove_entry(key) {
             Some(v) => {
-                eprintln!("\t ==> cached. cache_size: {}", self.cache_size);
+                eprintln!("==> cached. cache_size: {}", self.cache_size);
                 self.cache_size -= v.1.len() as u32
             }
             None => return,
@@ -140,7 +155,7 @@ impl Diskv {
 
     pub fn put(&self, key: &String, val: Vec<u8>) -> Result<(), DiskvError> {
         let cache_val = val.clone();
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache.write().unwrap(); // write lock
         match fs::write(path::Path::new(&self.options.base_path).join(key), val) {
             Ok(_) => Ok(cache.put(key, cache_val)),
             Err(e) => Err(DiskvError::IOError(e)),
@@ -148,11 +163,11 @@ impl Diskv {
     }
 
     fn try_get(&self, key: &String) -> Result<Option<Vec<u8>>, DiskvError> {
-        let cache = self.cache.read().unwrap();
+        let cache = self.cache.read().unwrap(); // read lock
         match cache.get(&key) {
             Some(v) => Ok(Some(v)),
             None => Ok(None),
-        }
+        } // read lock released??
     }
 
     pub fn get(&self, key: &String) -> Result<Option<Vec<u8>>, DiskvError> {
@@ -178,7 +193,7 @@ impl Diskv {
     }
 
     pub fn delete(&self, key: &String) -> Result<(), DiskvError> {
-        let mut cache = self.cache.write().unwrap();
+        let mut cache = self.cache.write().unwrap(); // write lock
         match fs::remove_file(path::Path::new(&self.options.base_path).join(key)) {
             Ok(_) => Ok(cache.delete(key)),
             Err(e) => {
@@ -225,8 +240,31 @@ mod tests {
         c.put(&key1, String::from("9876543210").into_bytes());
         assert_eq!(Some(String::from("9876543210").into_bytes()), c.get(&key1));
 
+        c.put(&key1, String::from("123").into_bytes());
+        assert_eq!(Some(String::from("123").into_bytes()), c.get(&key1));
+    }
+
+    #[test]
+    fn cache_make_space() {
+        let key1 = String::from("k1");
         let key2 = String::from("k2");
-        c.put(&key2, String::from("abcd").into_bytes());
+        let key3 = String::from("k3");
+
+        let mut c = DiskvCache::new(10);
+        assert_eq!(None, c.get(&key1));
+        assert_eq!(None, c.get(&key2));
+        assert_eq!(None, c.get(&key3));
+
+        c.put(&key1, String::from("0123456").into_bytes());
+        assert_eq!(Some(String::from("0123456").into_bytes()), c.get(&key1));
+
+        c.put(&key2, String::from("789").into_bytes());
+        assert_eq!(Some(String::from("789").into_bytes()), c.get(&key2));
+        assert_eq!(Some(String::from("0123456").into_bytes()), c.get(&key1));
+
+        c.put(&key3, String::from("abcdabcd").into_bytes());
+        assert_eq!(Some(String::from("abcdabcd").into_bytes()), c.get(&key3));
+        assert_eq!(None, c.get(&key1));
         assert_eq!(None, c.get(&key2));
     }
 
