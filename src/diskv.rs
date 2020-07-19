@@ -269,6 +269,35 @@ mod tests {
     }
 
     #[test]
+    fn cache_make_space_more() {
+        let key1 = String::from("k1");
+        let key2 = String::from("k2");
+        let key3 = String::from("k3");
+
+        let mut c = DiskvCache::new(5);
+        assert_eq!(None, c.get(&key1));
+        assert_eq!(None, c.get(&key2));
+        assert_eq!(None, c.get(&key3));
+
+        c.put(&key1, String::from("aa").into_bytes());
+        assert_eq!(Some(String::from("aa").into_bytes()), c.get(&key1));
+
+        c.put(&key2, String::from("bb").into_bytes());
+        assert_eq!(Some(String::from("bb").into_bytes()), c.get(&key2));
+        assert_eq!(Some(String::from("aa").into_bytes()), c.get(&key1));
+
+        c.put(&key3, String::from("cc").into_bytes());
+        assert_eq!(Some(String::from("cc").into_bytes()), c.get(&key3));
+
+        // only needed space is made - other keys stay intact
+        if c.get(&key1) == None {
+            assert_eq!(Some(String::from("bb").into_bytes()), c.get(&key2));
+        } else {
+            assert_eq!(Some(String::from("aa").into_bytes()), c.get(&key1));
+        }
+    }
+
+    #[test]
     fn cache_ignore_large_vals() {
         let key = String::from("k1");
         let mut c = DiskvCache::new(10);
