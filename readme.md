@@ -1,6 +1,6 @@
 I am learning rust and this is an attempt to port [peterbourgon's diskv](https://github.com/peterbourgon/diskv) to rust, as much as possible.
 
-# TODO
+### TODO
 2. Use Reader/Writer kind of pattern
 3. Custom path transformations
 4. Compression
