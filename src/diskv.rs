@@ -39,6 +39,9 @@ impl From<io::Error> for DiskvError {
 
 //
 // DiskvCache
+// This is HashMap backed in-memory cache used by Diskv. Its not exposed to client of Diskv.
+// cache_size_max controls amount of bytes to be cached. If any value is larger than cache_size_max, it is not cached.
+// keys are not considered as part of cache size.
 //
 #[derive(Debug)]
 pub struct DiskvCache {
@@ -130,6 +133,8 @@ pub struct Options {
 
 //
 // Diskv
+// This is disk backed, cache supported KV store.
+// RwLock is used to serialize write/delete operations where as read operations can run in parallel.
 //
 pub struct Diskv {
     options: Options,
@@ -167,16 +172,16 @@ impl Diskv {
         match cache.get(&key) {
             Some(v) => Ok(Some(v)),
             None => Ok(None),
-        } // read lock released??
+        }
     }
 
     pub fn get(&self, key: &String) -> Result<Option<Vec<u8>>, DiskvError> {
-        match self.try_get(key) {
+        match self.try_get(key) { // read lock released
             Ok(v) => match v {
                 Some(v) => Ok(Some(v)),
                 None => match fs::read(path::Path::new(&self.options.base_path).join(&key)) {
                     Ok(v) => {
-                        self.put(&key, v.clone())?;
+                        self.put(&key, v.clone())?; // write lock acquired
                         Ok(Some(v))
                     }
                     Err(e) => {
